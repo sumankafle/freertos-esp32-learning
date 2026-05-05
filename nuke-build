@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# nuke-build - human-friendly cleanup for ESP-IDF projects
+#
+# Features:
+#  - Lists what will be removed (nested `build` dirs, binaries, CMake files)
+#  - Dry-run mode: `-n` / `--dry-run`
+#  - Force mode: `-y` / `--yes`
+#  - Verbose: `-v` to list paths
+#  - Optional removal of `sdkconfig` with `--remove-sdkconfig`
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DRY_RUN=0
+FORCE=0
+VERBOSE=0
+REMOVE_SDKCONFIG=0
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Options:
+  -n, --dry-run         Show what would be deleted, do not delete
+  -y, --yes             Proceed without confirmation
+  -v, --verbose         Print detailed actions
+  --remove-sdkconfig    Also remove generated sdkconfig files
+  -h, --help            Show this help
+
+Examples:
+  $(basename "$0")           # interactive confirmation
+  $(basename "$0") -n        # dry-run
+  $(basename "$0") -y -v     # force and verbose
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n|--dry-run) DRY_RUN=1; shift ;;
+      -y|--yes) FORCE=1; shift ;;
+      -v|--verbose) VERBOSE=1; shift ;;
+      --remove-sdkconfig) REMOVE_SDKCONFIG=1; shift ;;
+      -h|--help) show_help; exit 0 ;;
+      *) echo "Unknown option: $1"; show_help; exit 2 ;;
+    esac
+  done
+}
+
+colorize() {
+  local code="$1"; shift
+  if [[ -t 1 ]]; then
+    printf "\033[%sm%s\033[0m" "$code" "$*"
+  else
+    printf "%s" "$*"
+  fi
+}
+
+info() { colorize "1;34" "[info]"; printf " %s\n" "$*"; }
+ok()   { colorize "1;32" "[ok]";   printf " %s\n" "$*"; }
+warn() { colorize "1;33" "[warn]"; printf " %s\n" "$*"; }
+err()  { colorize "1;31" "[error]"; printf " %s\n" "$*"; }
+
+parse_args "$@"
+
+info "Repository: $ROOT_DIR"
+
+# Gather targets
+mapfile -t BUILD_DIRS < <(find "$ROOT_DIR" -type d -name build -not -path "$ROOT_DIR/.git*" 2>/dev/null || true)
+mapfile -t BIN_FILES < <(find "$ROOT_DIR" -type f \( -name '*.bin' -o -name '*.elf' -o -name '*.map' \) -not -path "$ROOT_DIR/.git/*" 2>/dev/null || true)
+
+echo
+info "Summary of items to remove:"
+echo "  Build directories: ${#BUILD_DIRS[@]}"
+if [[ ${#BUILD_DIRS[@]} -gt 0 && $VERBOSE -eq 1 ]]; then
+  for d in "${BUILD_DIRS[@]}"; do
+    printf "    %s\n" "$d"
+  done
+fi
+echo "  Binary artifacts: ${#BIN_FILES[@]}"
+if [[ ${#BIN_FILES[@]} -gt 0 && $VERBOSE -eq 1 ]]; then
+  for f in "${BIN_FILES[@]}"; do
+    printf "    %s\n" "$f"
+  done
+fi
+
+if [[ $REMOVE_SDKCONFIG -eq 1 ]]; then
+  info "Note: sdkconfig files will be removed (requested)"
+fi
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  warn "Dry-run: no files will be deleted. Rerun without -n to perform deletion."
+  exit 0
+fi
+
+if [[ $FORCE -ne 1 ]]; then
+  echo
+  read -r -p "Proceed and delete the items above? [y/N] " reply
+  case "$reply" in
+    [Yy]*) ;;
+    *) warn "Aborted by user."; exit 0;;
+  esac
+fi
+
+info "Removing build directories..."
+if [[ ${#BUILD_DIRS[@]} -gt 0 ]]; then
+  for d in "${BUILD_DIRS[@]}"; do
+    if [[ $VERBOSE -eq 1 ]]; then
+      printf "  Removing %s\n" "$d"
+    fi
+    rm -rf "$d"
+  done
+else
+  ok "No build directories found."
+fi
+
+info "Removing binary artifacts and temporary files..."
+find "$ROOT_DIR" -type f \( -name '*.bin' -o -name '*.elf' -o -name '*.map' \) -not -path "$ROOT_DIR/.git/*" -print -delete || true
+
+info "Removing top-level CMake and generated files (if present)..."
+rm -f "$ROOT_DIR/CMakeCache.txt"
+rm -rf "$ROOT_DIR/CMakeFiles"
+rm -f "$ROOT_DIR/compile_commands.json"
+rm -f "$ROOT_DIR/flash_args" "$ROOT_DIR/flash_args.in" "$ROOT_DIR/flasher_args.json"
+
+if [[ $REMOVE_SDKCONFIG -eq 1 ]]; then
+  info "Removing sdkconfig and sdkconfig.old"
+  rm -f "$ROOT_DIR/sdkconfig.old"
+  rm -f "$ROOT_DIR/sdkconfig"
+else
+  info "Preserving sdkconfig files. Use --remove-sdkconfig to delete them."
+fi
+
+ok "Cleanup complete. You can rebuild with: idf.py build"
+exit 0

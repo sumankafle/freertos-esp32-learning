@@ -25,7 +25,7 @@ void task_unpinned(void *pvParameters) {
     (void) pvParameters;
     while (1) {
         printf("Task Unpinned: Running on core %d\n", xPortGetCoreID());
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -41,7 +41,7 @@ void task_pinned_core1(void *pvParameters) {
     (void) pvParameters;
     while (1) {
         printf("Task Pinned to Core 1: Running on core %d\n", xPortGetCoreID());
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
